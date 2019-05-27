@@ -1,0 +1,79 @@
+USE [tdbTmr]
+GO
+
+/****** Object:  StoredProcedure [dbo].[SP_Frm_Freight_Outgoing_Slt_WriteOff]    Script Date: 05/23/2019 13:27:37 ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+
+
+/*	Procedure Name		:		SP_Frm_Freight_Incoming_Slt_WriteOff
+	Description			:		StoredProcedure is used for the following form
+									* Frm_FrtOut_AdjustEz_NoBill
+	Creator				:		Santha
+	Created Date		:		3/13/2012
+	Database Used		:		TMRDBF	*/
+
+CREATE PROCEDURE [dbo].[SP_Frm_Freight_Outgoing_Slt_WriteOff]
+AS
+SET NOCOUNT ON
+BEGIN
+		
+	SELECT 
+		 ShipInfo.ShipInfoID
+		,InvFrtItems.InvItemFrtType
+		,SUM(ISNULL(InvFrtItems.FrtLoAmt,0)) AS SumOfFrtLoAmt
+		,SUM(ISNULL(InvFrtItems.FrtOcAmt,0)) AS SumOfFrtOcAmt
+		,Round(SUM(ISNULL(FrtLoAmt,0) + ISNULL(FrtOcAmt,0)),2) AS TotalBill
+	INTO #Freight_Outgoing_InvoiceSide
+	FROM ShipInfo LEFT JOIN 
+			InvFrtItems ON ShipInfo.ShipInfoID = InvFrtItems.ShipInfoID
+	GROUP BY ShipInfo.ShipInfoID, InvFrtItems.InvItemFrtType
+	HAVING InvFrtItems.InvItemFrtType	=	4
+	
+	SELECT 
+		 ShipInfo.ShipInfoID
+		,SUM(ISNULL(FrOutAmt,0)) AS defFrOutAmt
+	INTO #Freight_Outgoing_Adjustments
+	FROM ShipInfo LEFT JOIN 
+			FrOutAdj ON ShipInfo.ShipInfoID = FrOutAdj.ShipInfoID
+	GROUP BY ShipInfo.ShipInfoID
+
+	SELECT 
+		 ShipInfo.ShipInfoID
+		,ShipInfo.TruckNumber
+		,ShipInfo.Booking
+		,SUM(ISNULL(Freight,0)) AS defFreight
+	INTO #Freight_Outgoing_ShipInfo_Sum
+	FROM ShipInfo
+	GROUP BY ShipInfo.ShipInfoID, ShipInfo.TruckNumber, ShipInfo.Booking
+
+	SELECT 
+		 #Freight_Outgoing_InvoiceSide.ShipInfoID
+		,#Freight_Outgoing_InvoiceSide.TotalBill
+		,#Freight_Outgoing_ShipInfo_sum.defFreight
+		,#Freight_Outgoing_Adjustments.defFrOutAmt
+		,Customers.Company
+		,ShipInfo.TruckNumber
+		,ShipInfo.ShipDate
+		,ShipInfo.CustID
+		,DATEADD(DAY,60,ShipDate) AS WriteoffDate
+		,ISNULL(defFreight,0) - ISNULL(totalBill,0) - ISNULL(defFrOutAmt,0) AS WriteOff
+	FROM #Freight_Outgoing_Adjustments RIGHT JOIN 
+			#Freight_Outgoing_InvoiceSide RIGHT JOIN 
+			#Freight_Outgoing_ShipInfo_sum RIGHT JOIN 
+			ShipInfo  ON #Freight_Outgoing_ShipInfo_sum.ShipInfoID = ShipInfo.ShipInfoID
+					  ON #Freight_Outgoing_InvoiceSide.ShipInfoID = ShipInfo.ShipInfoID
+					  ON #Freight_Outgoing_Adjustments.ShipInfoID = ShipInfo.ShipInfoID LEFT JOIN 
+			Customers ON ShipInfo.CustID = Customers.CustID
+	WHERE ( ISNULL(defFreight,0) - ISNULL(totalBill,0) - ISNULL(defFrOutAmt,0)	<	-0.01 
+	Or	    ISNULL(defFreight,0) - ISNULL(totalBill,0) - ISNULL(defFrOutAmt,0)	>	 0.01	) 
+	AND		DATEADD(DAY,60,ShipDate)	<=	CONVERT(DATE,GETDATE())
+	ORDER BY #Freight_Outgoing_InvoiceSide.ShipInfoID
+END
+	
+GO
+
